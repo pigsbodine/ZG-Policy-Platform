@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      DB_PATH: /data/policies.db
+    volumes:
+      - policy_data:/data
+    restart: unless-stopped
+
+  # Run a spider: docker compose run --rm scraper scrapy crawl gov_cn
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    environment:
+      DB_PATH: /data/policies.db
+    volumes:
+      - policy_data:/data
+    profiles:
+      - scraper   # only starts when explicitly requested
+
+volumes:
+  policy_data:

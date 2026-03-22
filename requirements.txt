@@ -1,0 +1,8 @@
+# Scraping
+scrapy==2.11.2
+parsel==1.9.1
+
+# API
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.9.2
