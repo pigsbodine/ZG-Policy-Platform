@@ -13,7 +13,26 @@ services:
       - policy_data:/data
     restart: unless-stopped
 
-  # Run a spider: docker compose run --rm scraper scrapy crawl gov_cn
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    command: python scheduler.py
+    environment:
+      DB_PATH: /data/policies.db
+      # Time of day (UTC) to run all spiders. Default: 02:00.
+      SCRAPE_TIME: ${SCRAPE_TIME:-02:00}
+      # Set to "1" to also run immediately when the container starts.
+      RUN_ON_START: ${RUN_ON_START:-0}
+      # Optional: run every N hours instead of once daily.
+      # SCRAPE_INTERVAL_HOURS: 6
+    volumes:
+      - policy_data:/data
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  # One-off manual runs: docker compose run --rm scraper scrapy crawl gov_cn
   scraper:
     build:
       context: .

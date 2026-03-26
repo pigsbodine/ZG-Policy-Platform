@@ -2,6 +2,7 @@
 scrapy==2.11.2
 parsel==1.9.1
 pdfminer.six==20231228
+schedule==1.2.2
 
 # API
 fastapi==0.115.5
