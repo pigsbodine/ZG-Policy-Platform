@@ -62,3 +62,4 @@ class MofcomSpider(PolicySpider):
         )
         date = response.css(_DATE_SELS).get("").strip()
         yield self.make_item(response, source="mofcom", title=title, date=date)
+        yield from self.follow_pdf_links(response, source="mofcom", title=title, date=date)

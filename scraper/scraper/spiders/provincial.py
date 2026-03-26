@@ -8,7 +8,7 @@ Covered provinces/municipalities:
   - Shandong  (www.shandong.gov.cn)
 """
 import re
-from scraper.spiders.base import PolicySpider, extract_text
+from scraper.spiders.base import PolicySpider, extract_text, _PDF_HREF_RE
 from scraper.items import PolicyDocument
 
 _TITLE_SELS = ", ".join([
@@ -68,6 +68,38 @@ def _parse_doc(response, source):
         published_date=date,
         raw_html=response.text,
         text_content=extract_text(response),
+    )
+    # Follow any PDF attachment links on the document page
+    seen = set()
+    for href in response.css("a::attr(href)").getall():
+        if _PDF_HREF_RE.search(href) and href not in seen:
+            seen.add(href)
+            yield response.follow(
+                href,
+                callback=_parse_pdf_cb,
+                meta={"pdf_title": title, "pdf_date": date, "pdf_source": source},
+            )
+
+
+def _parse_pdf_cb(response):
+    """Module-level PDF callback used by provincial spiders."""
+    from scraper.pdf_utils import extract_pdf_text, looks_like_pdf
+
+    content_type = response.headers.get("Content-Type", b"").decode("utf-8", errors="ignore")
+    if not looks_like_pdf(response.url, content_type):
+        return
+
+    text = extract_pdf_text(response.body)
+    if not text:
+        return
+
+    yield PolicyDocument(
+        url=response.url,
+        title=response.meta.get("pdf_title", ""),
+        source=response.meta.get("pdf_source", ""),
+        published_date=response.meta.get("pdf_date", ""),
+        raw_html="",
+        text_content=text,
     )
 
 

@@ -346,3 +346,182 @@ class TestDatabasePipeline:
         count = pipe.conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
         assert count == 1
         pipe.conn.close()
+
+
+# ---------------------------------------------------------------------------
+# PDF support tests
+# ---------------------------------------------------------------------------
+
+class TestPdfUtils:
+    def test_extract_text_from_valid_pdf(self):
+        from scraper.pdf_utils import extract_pdf_text
+        pdf_bytes = (FIXTURES_DIR / "sample.pdf").read_bytes()
+        text = extract_pdf_text(pdf_bytes)
+        assert "Test Policy Text" in text
+
+    def test_extract_text_from_empty_bytes_returns_empty(self):
+        from scraper.pdf_utils import extract_pdf_text
+        assert extract_pdf_text(b"") == ""
+
+    def test_extract_text_from_garbage_returns_empty(self):
+        from scraper.pdf_utils import extract_pdf_text
+        assert extract_pdf_text(b"this is not a pdf") == ""
+
+    def test_looks_like_pdf_by_content_type(self):
+        from scraper.pdf_utils import looks_like_pdf
+        assert looks_like_pdf("https://example.com/doc", "application/pdf") is True
+        assert looks_like_pdf("https://example.com/doc", "text/html") is False
+
+    def test_looks_like_pdf_by_url(self):
+        from scraper.pdf_utils import looks_like_pdf
+        assert looks_like_pdf("https://example.com/doc.pdf", "text/html") is True
+        assert looks_like_pdf("https://example.com/doc.pdf?dl=1", "text/html") is True
+        assert looks_like_pdf("https://example.com/doc.html", "text/html") is False
+
+
+class TestFollowPdfLinks:
+    """Test that spiders generate PDF requests from HTML pages with PDF links."""
+
+    @pytest.fixture
+    def spider(self):
+        from scraper.spiders.gov_cn import GovCnSpider
+        return GovCnSpider()
+
+    def test_follow_pdf_links_yields_requests(self, spider):
+        html = (
+            "<html><body>"
+            '<a href="/zhengce/files/policy.pdf">Download PDF</a>'
+            '<a href="/zhengce/files/annex.pdf">Annex</a>'
+            "<p>Some content</p>"
+            "</body></html>"
+        ).encode("utf-8")
+        resp = HtmlResponse(
+            url="https://www.gov.cn/zhengce/content/2024-03/15/content_001.htm",
+            body=html,
+            encoding="utf-8",
+        )
+        requests = list(spider.follow_pdf_links(resp, source="gov.cn", title="Test", date="2024-03-15"))
+        assert len(requests) == 2
+        assert all(r.url.endswith(".pdf") for r in requests)
+        assert all(r.meta["pdf_source"] == "gov.cn" for r in requests)
+        assert all(r.meta["pdf_title"] == "Test" for r in requests)
+        assert all(r.meta["pdf_date"] == "2024-03-15" for r in requests)
+        assert all(r.callback == spider.parse_pdf for r in requests)
+
+    def test_follow_pdf_links_deduplicates(self, spider):
+        html = (
+            "<html><body>"
+            '<a href="/files/doc.pdf">PDF</a>'
+            '<a href="/files/doc.pdf">PDF again</a>'
+            "</body></html>"
+        ).encode("utf-8")
+        resp = HtmlResponse(
+            url="https://www.gov.cn/zhengce/content/2024-03/15/content_001.htm",
+            body=html,
+            encoding="utf-8",
+        )
+        requests = list(spider.follow_pdf_links(resp, source="gov.cn"))
+        assert len(requests) == 1
+
+    def test_follow_pdf_links_ignores_non_pdf(self, spider):
+        html = (
+            "<html><body>"
+            '<a href="/doc.html">HTML doc</a>'
+            '<a href="/doc.docx">Word doc</a>'
+            "</body></html>"
+        ).encode("utf-8")
+        resp = HtmlResponse(
+            url="https://www.gov.cn/zhengce/content/2024-03/15/content_001.htm",
+            body=html,
+            encoding="utf-8",
+        )
+        requests = list(spider.follow_pdf_links(resp, source="gov.cn"))
+        assert requests == []
+
+
+class TestParsePdf:
+    @pytest.fixture
+    def spider(self):
+        from scraper.spiders.gov_cn import GovCnSpider
+        return GovCnSpider()
+
+    def test_parse_pdf_yields_item(self, spider):
+        from scrapy.http import Response, Request
+        pdf_bytes = (FIXTURES_DIR / "sample.pdf").read_bytes()
+        req = Request(
+            url="https://www.gov.cn/zhengce/files/policy.pdf",
+            meta={"pdf_title": "Test Policy", "pdf_date": "2024-03-15", "pdf_source": "gov.cn"},
+        )
+        resp = Response(
+            url="https://www.gov.cn/zhengce/files/policy.pdf",
+            body=pdf_bytes,
+            headers={"Content-Type": "application/pdf"},
+            request=req,
+        )
+        _, items = collect(spider.parse_pdf(resp))
+        assert len(items) == 1
+        item = items[0]
+        assert item["source"] == "gov.cn"
+        assert item["title"] == "Test Policy"
+        assert item["published_date"] == "2024-03-15"
+        assert "Test Policy Text" in item["text_content"]
+        assert item["raw_html"] == ""
+
+    def test_parse_pdf_skips_non_pdf_content_type(self, spider):
+        from scrapy.http import Response, Request
+        req = Request(
+            url="https://www.gov.cn/zhengce/content/2024-03/15/content_001.htm",
+            meta={"pdf_title": "", "pdf_date": "", "pdf_source": "gov.cn"},
+        )
+        resp = Response(
+            url="https://www.gov.cn/doc.htm",
+            body=b"<html></html>",
+            headers={"Content-Type": "text/html"},
+            request=req,
+        )
+        _, items = collect(spider.parse_pdf(resp))
+        assert items == []
+
+    def test_parse_pdf_skips_empty_pdf(self, spider):
+        from scrapy.http import Response, Request
+        req = Request(
+            url="https://www.gov.cn/files/empty.pdf",
+            meta={"pdf_title": "", "pdf_date": "", "pdf_source": "gov.cn"},
+        )
+        resp = Response(
+            url="https://www.gov.cn/files/empty.pdf",
+            body=b"",
+            headers={"Content-Type": "application/pdf"},
+            request=req,
+        )
+        _, items = collect(spider.parse_pdf(resp))
+        assert items == []
+
+
+class TestDocPageFollowsPdfLinks:
+    """Integration: parse_document yields both an HTML item and PDF requests."""
+
+    @pytest.fixture
+    def spider(self):
+        from scraper.spiders.gov_cn import GovCnSpider
+        return GovCnSpider()
+
+    def test_parse_document_also_yields_pdf_requests(self, spider):
+        html = (
+            "<html><head><title>Policy - gov.cn</title></head><body>"
+            '<h1 class="pages-title">Some Policy</h1>'
+            '<time datetime="2024-03-15">2024-03-15</time>'
+            '<a href="/files/policy_full.pdf">Full text PDF</a>'
+            "<p>Brief summary...</p>"
+            "</body></html>"
+        ).encode("utf-8")
+        resp = HtmlResponse(
+            url="https://www.gov.cn/zhengce/content/2024-03/15/content_001.htm",
+            body=html,
+            encoding="utf-8",
+        )
+        requests, items = collect(spider.parse_document(resp))
+        assert len(items) == 1, "Should yield 1 HTML item"
+        assert len(requests) == 1, "Should yield 1 PDF request"
+        assert requests[0].url.endswith(".pdf")
+        assert requests[0].meta["pdf_title"] == "Some Policy"

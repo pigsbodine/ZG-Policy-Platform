@@ -1,6 +1,7 @@
 # Scraping
 scrapy==2.11.2
 parsel==1.9.1
+pdfminer.six==20231228
 
 # API
 fastapi==0.115.5
