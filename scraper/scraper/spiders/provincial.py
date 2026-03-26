@@ -8,9 +8,35 @@ Covered provinces/municipalities:
   - Shandong  (www.shandong.gov.cn)
 """
 import re
-from scrapy import Spider
 from scraper.spiders.base import PolicySpider, extract_text
 from scraper.items import PolicyDocument
+
+_TITLE_SELS = ", ".join([
+    ".article-title::text",
+    "h1::text",
+    ".tit::text",
+    ".zwTitle::text",
+    ".pages-title::text",
+    ".articleTitle::text",
+])
+
+_DATE_SELS = ", ".join([
+    ".date::text",
+    ".pubTime::text",
+    ".riqi::text",
+    "time::attr(datetime)",
+    "time::text",
+    ".zwDate::text",
+    "span.date::text",
+])
+
+_NEXT_SELS = ", ".join([
+    "a.next::attr(href)",
+    "a[rel='next']::attr(href)",
+    "a[title='下一页']::attr(href)",
+    "li.next a::attr(href)",
+    ".pager-next a::attr(href)",
+])
 
 
 # ---------------------------------------------------------------------------
@@ -21,22 +47,21 @@ def _generic_list_parse(spider, response, source, doc_url_pattern):
     for href in response.css("a::attr(href)").getall():
         if re.search(doc_url_pattern, href):
             yield response.follow(href, lambda r, s=source: _parse_doc(r, s))
-    next_page = response.css(
-        "a.next::attr(href), a[rel='next']::attr(href), a[title='下一页']::attr(href)"
-    ).get()
+    next_page = response.css(_NEXT_SELS).get()
     if next_page:
-        yield response.follow(next_page, lambda r, sp=spider, src=source, pat=doc_url_pattern: _generic_list_parse(sp, r, src, pat))
+        yield response.follow(
+            next_page,
+            lambda r, sp=spider, src=source, pat=doc_url_pattern: _generic_list_parse(sp, r, src, pat),
+        )
 
 
 def _parse_doc(response, source):
     title = (
-        response.css(".article-title::text, h1::text, .tit::text, .zwTitle::text").get("").strip()
+        response.css(_TITLE_SELS).get("").strip()
         or response.css("title::text").get("").strip()
     )
-    date = response.css(
-        ".date::text, .pubTime::text, .riqi::text, time::text, .zwDate::text"
-    ).get("").strip()
-    return PolicyDocument(
+    date = response.css(_DATE_SELS).get("").strip()
+    yield PolicyDocument(
         url=response.url,
         title=title,
         source=source,
@@ -65,7 +90,7 @@ class BeijingSpider(PolicySpider):
         )
 
     def parse_document(self, response):
-        yield _parse_doc(response, "beijing")
+        yield from _parse_doc(response, "beijing")
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +111,7 @@ class ShanghaiSpider(PolicySpider):
         )
 
     def parse_document(self, response):
-        yield _parse_doc(response, "shanghai")
+        yield from _parse_doc(response, "shanghai")
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +133,7 @@ class GuangdongSpider(PolicySpider):
         )
 
     def parse_document(self, response):
-        yield _parse_doc(response, "guangdong")
+        yield from _parse_doc(response, "guangdong")
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +154,7 @@ class ZhejiangSpider(PolicySpider):
         )
 
     def parse_document(self, response):
-        yield _parse_doc(response, "zhejiang")
+        yield from _parse_doc(response, "zhejiang")
 
 
 # ---------------------------------------------------------------------------
@@ -150,4 +175,4 @@ class ShandongSpider(PolicySpider):
         )
 
     def parse_document(self, response):
-        yield _parse_doc(response, "shandong")
+        yield from _parse_doc(response, "shandong")

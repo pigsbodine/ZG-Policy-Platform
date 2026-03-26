@@ -13,11 +13,18 @@ class DeduplicationPipeline:
 
     def open_spider(self, spider):
         db_path = spider.settings.get("DB_PATH")
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        parent = os.path.dirname(db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         conn = sqlite3.connect(db_path)
-        rows = conn.execute("SELECT url FROM documents").fetchall()
-        conn.close()
-        self._seen_urls = {r[0] for r in rows}
+        try:
+            rows = conn.execute("SELECT url FROM documents").fetchall()
+            self._seen_urls = {r[0] for r in rows}
+        except sqlite3.OperationalError:
+            # documents table not created yet; DatabasePipeline will create it
+            self._seen_urls = set()
+        finally:
+            conn.close()
 
     def process_item(self, item, spider):
         url = item.get("url", "")
@@ -35,8 +42,13 @@ class DatabasePipeline:
 
     def open_spider(self, spider):
         db_path = spider.settings.get("DB_PATH")
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        parent = os.path.dirname(db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         self.conn = sqlite3.connect(db_path)
+        self._setup_db()
+
+    def _setup_db(self):
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS documents (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
