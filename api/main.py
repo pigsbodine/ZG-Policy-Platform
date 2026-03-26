@@ -92,7 +92,7 @@ def search(
     offset = (page - 1) * page_size
 
     source_filter = "AND d.source = ?" if source else ""
-    params: list = [q, q]
+    params: list = [q]
     if source:
         params.append(source)
     params += [page_size, offset]
